@@ -510,7 +510,7 @@ class CorrelationFitter:
         vkAI.extend([-x + 1.0j * y for x, y in zip(b2, c2)])
 
         return BosonicBath(
-            self.Q, ckAR, vkAR, ckAI, vkAI, T=self.T)
+            self.Q, ckAR, vkAR, ckAI, vkAI, T=self.T,combine=False)
 
 
 class OhmicBath:
@@ -696,6 +696,7 @@ class OhmicBath:
                                    lower=lower, upper=upper,
                                    sigma=sigma, guesses=guesses,
                                    Nr=Nr, Ni=Ni, full_ansatz=full_ansatz)
+        bath.spectral_density=self.spectral_density
         return bath, fitInfo
 
     def make_spectral_fit(self, x, rmse=1e-5, lower=None, upper=None,
@@ -917,6 +918,8 @@ def _fit(func, C, t, N, default_guess_scenario='',
         lower = templower
         upper = tempupper
         sigma = tempsigma
+        if (tempupper==templower).all() and (tempguess==tempupper).all():
+            return 0, _unpack(templower,n)
     if not ((len(guesses) == len(lower)) and (len(guesses) == len(upper))):
         raise ValueError("The shape of the provided fit parameters is \
                          not consistent")
@@ -928,14 +931,16 @@ def _fit(func, C, t, N, default_guess_scenario='',
 
 def _default_guess_scenarios(C, t, default_guess_scenario, N, n):
     C_max = abs(max(C, key=np.abs))
+    tempsigma = 1e-2
+
     if C_max == 0:
         # When the target function is zero
-        rmse = 0
-        params = [0, 0, 0]
-        return rmse, params
-
+        tempguesses = _pack(
+            [0] * N, [0] * N, [0] * N, [0] * N)
+        templower=tempguesses
+        tempupper=tempguesses
+        return tempguesses, templower, tempupper, tempsigma
     wc = t[np.argmax(C)]
-    tempsigma = 1e-2
 
     if "correlation" in default_guess_scenario:
         if n == 4:
@@ -1068,7 +1073,7 @@ def _gen_summary(time, rmse, N, label, params,
                 f" was obtained for the {label}\n")
     summary += f" The current fit took {time: 2f} seconds"
     return summary
-
+   
 
 def _two_column_summary(
         params_real, params_imag, fit_time_real, fit_time_imag, Nr, Ni,

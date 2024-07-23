@@ -444,9 +444,11 @@ class BosonicBath(Bath):
         # We shift w by an epsilon to get the value in the limit w->0
         w = np.array(w, dtype=float)
         w[w == 0.0] += 1e-6
-
-        S = (2 * np.sign(w) * self.spectral_density(np.abs(w)) *
-             (self._bose_einstein(w) + 1))
+        if self.T!=0:
+            S = (2 * np.sign(w) * self.spectral_density(np.abs(w)) *
+                (self._bose_einstein(w) + 1))
+        else:
+            S= 2 * np.heaviside(w,0) * self.spectral_density(w)
         return S
 
     def correlation_function_approx(self, t):
@@ -504,10 +506,8 @@ class BosonicBath(Bath):
                 coeff = 1j * exp.ck
             if exp.type == BathExponent.types['RI']:
                 coeff += 1j * exp.ck2
-            if exp.type == BathExponent.types['I']:
-                S += 2 * np.real((coeff) / (exp.vk - 1j*w))
-            else:
-                S += 2 * np.real((coeff) / (exp.vk - 1j*w))
+      
+            S += 2 * np.real((coeff) / (exp.vk - 1j*w))
 
         return S
 
@@ -913,7 +913,10 @@ class UnderDampedBath(BosonicBath):
     @classmethod
     def _matsubara_params(cls, lam, gamma, w0, T, Nk):
         """ Calculate the Matsubara coefficients and frequencies. """
-        beta = 1/T
+        try:
+            beta = 1/T
+        except ZeroDivisionError:
+            beta=np.inf
         Om = np.sqrt(w0**2 - (gamma/2)**2)
         Gamma = gamma/2.
 
