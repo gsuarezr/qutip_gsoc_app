@@ -28,7 +28,7 @@ try:
 except ModuleNotFoundError:
     _mpmath_available = False
 
-from ..utilities import (n_thermal, fit_correlation, SpectralFitter)
+from ..utilities import (n_thermal, fit_correlation, fit_underdamped)
 
 
 # TODO improve all documentation (content, links, formatting)
@@ -461,8 +461,7 @@ class BosonicEnvironment(abc.ABC):
         -------
         A bosonic environment
         """
-        fitter = SpectralFitter(self.T, wlist, self.spectral_density)
-        params, fitinfo = fitter.get_fit(N)
+        params, fitinfo = fit_underdamped(self.spectral_density,wlist,N,Nk)
         lam, gamma, w0 = params
         w0 = np.array(
             [

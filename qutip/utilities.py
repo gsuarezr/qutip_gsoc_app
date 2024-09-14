@@ -4,7 +4,7 @@ qutip modules.
 """
 
 __all__ = ['n_thermal', 'clebsch', 'convert_unit',
-           'SpectralFitter', 'fit_correlation']
+           'fit_underdamped', 'fit_correlation']
 
 from time import time
 
@@ -580,151 +580,107 @@ def _generate_correlation_exponents(params_real, params_imag, n=3):
 
 
 
-class SpectralFitter:
-    # TODO make into function
-
-    """
-    A helper class for constructing a Bosonic bath from a fit of the spectral
-    density with a sum of underdamped modes.
+def _meier_tannor_SD(w, a, b, c):
+    r"""
+    Underdamped spectral density used for fitting in Meier-Tannor form
+    (see Eq. 38 in the BoFiN paper, DOI: 10.1103/PhysRevResearch.5.013181)
+    or the get_fit method.
 
     Parameters
     ----------
-    Q : :obj:`.Qobj`
-        Operator describing the coupling between system and bath.
-
-    T : float
-        Bath temperature.
-
     w : :obj:`np.array.`
-        The range on which to perform the fit, it is recommended that it covers
-        at least twice the cutoff frequency of the desired spectral density.
-
-    J : :obj:`np.array.` or callable
-        The spectral density to be fitted as an array or function.
+        The frequency of the spectral density
+    a : :obj:`np.array.`
+        Array of coupling constants ($\alpha_i^2$)
+    b : :obj:`np.array.`
+        Array of cutoff parameters ($\Gamma'_i$)
+    c : :obj:`np.array.`
+        Array of resonant frequencies ($\Omega_i$)
     """
 
-    def __init__(self, T, w, J):
-        self.T = T
-        self.set_spectral_density(w, J)
+    return sum((2 * ai * bi * w
+                / ((w + ci) ** 2 + bi ** 2)
+                / ((w - ci) ** 2 + bi ** 2))
+                for ai, bi, ci in zip(a, b, c))
 
-    def set_spectral_density(self, w, J):
-        """
-        Sets the spectral density to be fitted. It may be provided either as an
-        array of function values or as a python function. For internal reasons,
-        it will then be interpolated or discretized as necessary.
-        """
+def fit_underdamped(J,w,
+    N=None,
+    Nk=None,
+    final_rmse=5e-6,
+    lower=None,
+    upper=None,
+    sigma=None,
+    guesses=None,
+):
+    r"""
+    Provides a fit to the spectral density with N underdamped oscillator
+    baths. N can be determined automatically based on reducing the
+    normalized root mean squared error below a certain threshold.
 
-        if callable(J):
-            self._w = w
-            self._J_array = J(w)
-            self._J_fun = J
-        else:
-            self._w = w
-            self._J_array = J
-            self._J_fun = InterpolatedUnivariateSpline(w, J)
+    Parameters
+    ----------
+    N : optional, int
+        Number of underdamped oscillators to use.
+        If set to None, it is determined automatically.
+    lower: list
+        The lower bounds are considered to be the same for all N modes.
+        For example,
 
-    @classmethod
-    def _meier_tannor_SD(cls, w, a, b, c):
-        r"""
-        Underdamped spectral density used for fitting in Meier-Tannor form
-        (see Eq. 38 in the BoFiN paper, DOI: 10.1103/PhysRevResearch.5.013181)
-        or the get_fit method.
+        lower=[0,-1,2]
 
-        Parameters
-        ----------
-        w : :obj:`np.array.`
-            The frequency of the spectral density
-        a : :obj:`np.array.`
-            Array of coupling constants ($\alpha_i^2$)
-        b : :obj:`np.array.`
-            Array of cutoff parameters ($\Gamma'_i$)
-        c : :obj:`np.array.`
-            Array of resonant frequencies ($\Omega_i$)
-        """
+        would bound the coupling to be bigger than 0, the cutoff frequency
+        to be higher than 1, and the central frequency to be bigger than 2
 
-        return sum((2 * ai * bi * w
-                    / ((w + ci) ** 2 + bi ** 2)
-                    / ((w - ci) ** 2 + bi ** 2))
-                   for ai, bi, ci in zip(a, b, c))
+    upper : list
+        Upper bounds on the parameters for the fit, the structure is the
+        same as the lower keyword.
+    sigma : float
+        Uncertainty in the data considered for the fit, all data points are
+        considered to have the same uncertainty.
+    guesses : list
+        Initial guesses for the parameters. Same structure as lower and
+        upper.
 
-    def get_fit(
-        self,
-        N=None,
-        Nk=None,
-        final_rmse=5e-6,
-        lower=None,
-        upper=None,
-        sigma=None,
-        guesses=None,
-    ):
-        r"""
-        Provides a fit to the spectral density with N underdamped oscillator
-        baths. N can be determined automatically based on reducing the
-        normalized root mean squared error below a certain threshold.
+    Note: If one of lower, upper, sigma, guesses is None, all are discarded
 
-        Parameters
-        ----------
-        N : optional, int
-            Number of underdamped oscillators to use.
-            If set to None, it is determined automatically.
-        lower: list
-            The lower bounds are considered to be the same for all N modes.
-            For example,
+    Returns
+    -------
+    1. A Bosonic Bath created with the fit parameters for the original
+        spectral density function (that was provided or interpolated)
+    2. A dictionary containing the following information about the fit:
+        * fit_time:
+            The time the fit took in seconds.
+        * rsme:
+            Normalized mean squared error obtained in the fit.
+        * N:
+            The number of terms used for the fit.
+        * params:
+            The fitted parameters (3N parameters), it contains three lists
+            one for each parameter, each list containing N terms.
+        * Nk:
+            The number of exponents used to construct the bosonic bath.
+        * summary:
+            A string that summarizes the information of the fit.
+    """
+    if callable(J):
+        J=J(w)
 
-            lower=[0,-1,2]
+    start = time()
+    rmse, params = _run_fit(
+        _meier_tannor_SD, J, w,
+        final_rmse, default_guess_scenario="Spectral Density", N=N,
+        sigma=sigma, guesses=guesses, lower=lower, upper=upper)
+    end = time()
 
-            would bound the coupling to be bigger than 0, the cutoff frequency
-            to be higher than 1, and the central frequency to be bigger than 2
-
-        upper : list
-            Upper bounds on the parameters for the fit, the structure is the
-            same as the lower keyword.
-        sigma : float
-            Uncertainty in the data considered for the fit, all data points are
-            considered to have the same uncertainty.
-        guesses : list
-            Initial guesses for the parameters. Same structure as lower and
-            upper.
-
-        Note: If one of lower, upper, sigma, guesses is None, all are discarded
-
-        Returns
-        -------
-        1. A Bosonic Bath created with the fit parameters for the original
-          spectral density function (that was provided or interpolated)
-        2. A dictionary containing the following information about the fit:
-            * fit_time:
-                The time the fit took in seconds.
-            * rsme:
-                Normalized mean squared error obtained in the fit.
-            * N:
-                The number of terms used for the fit.
-            * params:
-                The fitted parameters (3N parameters), it contains three lists
-                one for each parameter, each list containing N terms.
-            * Nk:
-                The number of exponents used to construct the bosonic bath.
-            * summary:
-                A string that summarizes the information of the fit.
-        """
-
-        start = time()
-        rmse, params = _run_fit(
-            SpectralFitter._meier_tannor_SD, self._J_array, self._w,
-            final_rmse, default_guess_scenario="Spectral Density", N=N,
-            sigma=sigma, guesses=guesses, lower=lower, upper=upper)
-        end = time()
-
-        fit_time = end - start
-        spec_n = len(params[0])
-        #result = self._generate_bath(params, Nk)
-        summary = _gen_summary(
-            fit_time, rmse, N, "The Spectral Density", params)
-        fitInfo = {
-            "fit_time": fit_time, "rmse": rmse, "N": spec_n, "params": params,
-            "Nk": Nk, "summary": summary}
-        #result.fitinfo = fitInfo
-        return params,fitInfo
+    fit_time = end - start
+    spec_n = len(params[0])
+    #result = self._generate_bath(params, Nk)
+    summary = _gen_summary(
+        fit_time, rmse, N, "The Spectral Density", params)
+    fitInfo = {
+        "fit_time": fit_time, "rmse": rmse, "N": spec_n, "params": params,
+        "Nk": Nk, "summary": summary}
+    return params,fitInfo
 
 
 def _pack(*args):
