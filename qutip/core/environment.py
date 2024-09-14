@@ -28,7 +28,7 @@ try:
 except ModuleNotFoundError:
     _mpmath_available = False
 
-from ..utilities import (n_thermal, CorrelationFitter, SpectralFitter)
+from ..utilities import (n_thermal, fit_correlation, SpectralFitter)
 
 
 # TODO improve all documentation (content, links, formatting)
@@ -122,14 +122,23 @@ class BosonicEnvironment(abc.ABC):
     @abc.abstractmethod
     def power_spectrum(self, w: float | ArrayLike, *,
                        eps: float = 1e-10):
-        """
+        r"""
         The power spectrum of this environment. See the Users Guide on
         :ref:`bosonic environments <bosonic environments guide>` for specifics
         on the definitions used by QuTiP.
 
         If no analytical expression for the power spectrum is known, it will
-        be derived from the spectral density. In this case, the temperature of
-        this environment must be specified.
+        be derived from the spectral density using the 
+        fluctuation-dissipation theorem which can be expressed as. 
+
+        .. math::
+
+        S(\omega) = 2 J(\omega )\left( n(\omega) +1 \right)
+
+        where :math:`n(\omega)` is the Bose-Einstein distribution, and we 
+        have used the fact that the spectral density is positive.
+
+        In this case, the temperature of this environment must be specified.
 
         If no analytical expression for the spectral density is known either,
         the power spectrum will instead be derived from the correlation
@@ -150,8 +159,200 @@ class BosonicEnvironment(abc.ABC):
         ...
 
     def exponential_approximation(self, method, **options):
-        # TODO documentation
+        r"""
+        This function returns an `ExponentialBosonicEnvironment`, 
+        that approximates this `BosonicEnvironment`. The approximation can be
+        done via different methods, for an in depth discussion see the 
+        following review by Takahashi et al. DOI: 10.1063/5.0209348
+
+        The parameters needed depend on the method. The current methods are
+
+            - Fitting the Spectral density with Underdamped modes:
+                Provides a fit to the spectral density with N underdamped 
+                oscillator baths. N can be determined automatically based on 
+                reducing the normalized root mean squared error below a
+                certain threshold.
+
+                Parameters
+                ----------
+                N : optional, int
+                    Number of underdamped oscillators to use.
+                    If set to None, it is determined automatically.
+                Nk : optional, int
+                    Number of exponential terms used to approximate the bath
+                    correlation functions, defaults to 1. To approximate the
+                    correlation function the number of exponents grow as the
+                    Desired normalized root mean squared error. Defaults to
+                    :math:`5\times10^{-6}`. Only used if N is set to None.
+                    Desired normalized root mean squared error. Defaults to
+                    Lower bounds on the parameters for the fit. A list of size
+                    3, containing the lower bounds for :math:`a_i` 
+                    (coupling constants),:math:`b_i` (cutoff frequencies) and 
+                    :math:`c_i` (resonant frequencies) in the following fit
+                    function:
+
+                    .. math::
+                        J(\omega) = \sum_{i=1}^{k} \frac{2 a_{i} b_{i} \omega
+                        }{\left(\left( \omega + c_{i}\right)^{2} + b_{i}^{2}
+                        \right)\left(\left( \omega - c_{i}\right)^{2} + 
+                        b_{i}^{2} \right)}
+
+                    The lower bounds are considered to be the same for all N 
+                    modes. For example,
+
+                    lower=[0,-1,2]
+
+                    would bound the coupling to be bigger than 0, the cutoff 
+                    frequency to be higher than 1, and the central frequency to
+                    be bigger than 2
+
+                upper : list
+                    Upper bounds on the parameters for the fit, the structure
+                    is the same as the lower keyword.
+                sigma : float
+                    Uncertainty in the data considered for the fit, all data
+                    points are considered to have the same uncertainty.
+                guesses : list
+                    Initial guesses for the parameters. Same structure as lower 
+                    and upper.
+
+                Note: If one of lower, upper, sigma, guesses is None, 
+                    all are discarded
+
+                Returns
+                -------
+                1. A Bosonic Bath created with the fit parameters for the
+                original spectral density function (that was provided or 
+                interpolated)
+                2. A dictionary containing the following information about the 
+                fit:
+                    * fit_time:
+                        The time the fit took in seconds.
+                    * rsme:
+                        Normalized mean squared error obtained in the fit.
+                    * N:
+                        The number of terms used for the fit.
+                    * params:
+                        The fitted parameters (3N parameters), it contains 
+                        three lists one for each parameter, each list 
+                        containing N terms.
+                    * Nk:
+                        The number of exponents used to construct the 
+                        bosonic bath.
+                    * summary:
+                        A string that summarizes the information of the fit.
+
+            - Fitting the Correlation Function:
+                Fit the correlation function with Ni exponential terms for the 
+                imaginary part of the correlation function and Nr for the real.
+                If no number of terms is provided, this function determines the 
+                number of exponents based on reducing the normalized root mean 
+                squared error below a certain threshold.
+
+                Parameters
+                ----------
+                Nr : optional, int
+                    Number of exponents to use for the real part.
+                    If set to None it is determined automatically.
+                Ni : optional, int
+                    Number of exponents terms to use for the imaginary part.
+                    If set to None it is found automatically.
+                final_rmse : float
+                    Desired normalized root mean squared error. Only used if Ni
+                    or Nr are not specified.
+                lower : list
+                    lower bounds on the parameters for the fit. A list of size 
+                    4 when full_ansatz is True and of size 3 when it is false, 
+                    each value represents the lower bound for each parameter.
+
+                    The first and last terms describe the real and imaginary 
+                    parts of the amplitude, the second the decay rate, and the 
+                    third one the oscillation frequency. The lower bounds are 
+                    considered to be the same for all Nr and Ni exponents. 
+                    For example
+
+                    lower=[0,-1,1,1]
+
+                    would bound the real part of the amplitude to be bigger 
+                    than 0, the decay rate to be higher than -1, and the 
+                    oscillation frequency to be bigger than 1, and the 
+                    imaginary part of the amplitude to be greater than 1
+                upper : list
+                    upper bounds on the parameters for the fit, the structure 
+                    is the same as the lower keyword.
+                sigma : float
+                    uncertainty in the data considered for the fit, all data 
+                    points are considered to have the same uncertainty.
+                guesses : list
+                    Initial guesses for the parameters. Same structure as lower 
+                    and upper.
+                full_ansatz : bool
+                    Indicates whether to use the function
+
+                    .. math::
+                        C(t)= \sum_{k}a_{k}e^{-b_{k} t}e^{i c_{k} t}
+
+                    for the fitting of the correlation function (when False, 
+                    the default value)  this function gives us
+                    faster fits,usually it is not needed to tweek
+                    guesses, sigma, upper and lower as defaults work for most
+                    situations.  When set to True one uses the function
+
+                    .. math::
+                        C(t)= \sum_{k}(a_{k}+i d_{k})e^{-b_{k} t}e^{i c_{k} t}
+
+                    Unfortunately this gives us significantly slower fits and 
+                    some tunning of the guesses,sigma, upper and lower are 
+                    usually needed. On the other hand, it can lead to better 
+                    fits with lesser exponents specially for anomalous spectral
+                    densities such that $Im(C(0))\neq 0$. When using this with 
+                    default values if the fit takes too long you should input 
+                    guesses, lower and upper bounds, if you are not sure what
+                    to set them to it is useful to use the output of fitting
+                    with the other option as guesses for the fit.
+
+                Note: If one of lower, upper, sigma, guesses is None, 
+                all are discarded
+
+                Returns
+                -------
+                1. A Bosonic Bath created with the fit parameters from the 
+                original correlation function (that was provided or
+                interpolated).
+                2. A dictionary containing the following information about 
+                the fit:
+                    * Nr :
+                        The number of terms used to fit the real part of the
+                        correlation function.
+                    * Ni :
+                        The number of terms used to fit the imaginary part of 
+                        the correlation function.
+                    * fit_time_real :
+                        The time the fit of the real part of the correlation 
+                        function took in seconds.
+                    * fit_time_imag :
+                        The time the fit of the imaginary part of the 
+                        correlation function took in seconds.
+                    * rsme_real :
+                        Normalized mean squared error obtained in the 
+                        fit of the real part of the correlation function.
+                    * rsme_imag :
+                        Normalized mean squared error obtained in the fit of 
+                        the imaginary part of the correlation function.
+                    * params_real :
+                        The fitted parameters (3N parameters) for the real part
+                        of the correlation function, it contains three lists 
+                        one for each parameter, each list containing N terms.
+                    * params_imag :
+                        The fitted parameters (3N parameters) for the imaginary 
+                        part of the correlation function, it contains three 
+                        lists one for each parameter, each list containing N 
+                        terms.
+                    * summary :
+                        A string that summarizes the information about the fit.
+        """
         # TODO is this the right way of doing it?
+        # TODO: reformulate as setters and getters
         approximator = self._avail_approximators.get(method, None)
         if approximator is None:
             raise ValueError(f"Unknown approximation method: {method}")
@@ -219,7 +420,7 @@ class BosonicEnvironment(abc.ABC):
 
     def _fit_correlation_function(self, tlist, Nr, Ni, full_ansatz=False):
         """
-        Generates a reservoir from the correlation function
+        Generates a environment from the correlation function
 
         Parameters
         ----------
@@ -235,14 +436,17 @@ class BosonicEnvironment(abc.ABC):
 
         Returns
         -------
-        A bosonic reservoir
+        A bosonic environment
         """
-        fitter = CorrelationFitter(self.T, tlist, self.correlation_function)
-        return fitter.get_fit(Nr=Nr, Ni=Ni, full_ansatz=full_ansatz)
+        ckAR, vkAR, ckAI, vkAI, fitInfo = fit_correlation(
+            self.correlation_function, tlist, Nr=Nr, Ni=Ni,
+            full_ansatz=full_ansatz)
+        return ExponentialBosonicEnvironment(
+            ck_real=ckAR, vk_real=vkAR, vk_imag=vkAI, ck_imag=ckAI), fitInfo
 
     def _fit_spectral_density(self, wlist, N, Nk):
         """
-        Generates a reservoir from the spectral density
+        Generates a environment from the spectral density
 
         Parameters
         ----------
@@ -255,10 +459,36 @@ class BosonicEnvironment(abc.ABC):
 
         Returns
         -------
-        A bosonic reservoir
+        A bosonic environment
         """
         fitter = SpectralFitter(self.T, wlist, self.spectral_density)
-        return fitter.get_fit(N=N, Nk=Nk)
+        params, fitinfo = fitter.get_fit(N)
+        lam, gamma, w0 = params
+        w0 = np.array(
+            [
+                np.sqrt((w0[i] + 0j) ** 2 + (gamma[i] + 0j / 2) ** 2)
+                for i in range(len(w0))
+            ]
+        )
+        lam = np.sqrt(
+            lam + 0j
+        )
+        # both w0, and lam modifications are needed to input the
+        # right value of the fit into the Underdamped bath
+        ckAR = []
+        vkAR = []
+        ckAI = []
+        vkAI = []
+        for lamt, Gamma, Om in zip(lam, gamma, w0):
+            env = UnderDampedEnvironment(self.T, lamt, 2 * Gamma, Om)
+            coeffs = env._matsubara_params(Nk)
+            ckAR.extend(coeffs[0])
+            vkAR.extend(coeffs[1])
+            ckAI.extend(coeffs[2])
+            vkAI.extend(coeffs[3])
+
+        return ExponentialBosonicEnvironment(
+            ckAR, vkAR, ckAI, vkAI, T=self.T), fitinfo
 
     @classmethod
     def from_correlation_function(
@@ -801,8 +1031,6 @@ class UnderDampedEnvironment(BosonicEnvironment):
         -------
         The correlation function evaluated at the time t.
         """
-        # TODO: I don't like this way of working with the fast fourier transform
-        # we need an wMax so that spectral density is zero for w>wMax, guess:
         wMax = self.w0 + 10 * self.gamma
         return self._cf_from_ps(t, wMax)
 
