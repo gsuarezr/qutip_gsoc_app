@@ -47,7 +47,7 @@ class BosonicEnvironment(abc.ABC):
     of these characteristic functions, or use a predefined sub-class such as
     the `DrudeLorentzEnvironment`, the `UnderDampedEnvironment` or the
     `OhmicEnvironment`.
-    
+
     Parameters
     ----------
     T: optional, float
@@ -629,14 +629,16 @@ class DrudeLorentzEnvironment(BosonicEnvironment):
         beta = 1. / self.T
         kappa, epsilon = self._kappa_epsilon(Nk)
 
-        eta_p = [self.lam * self.gamma * (self._cot(self.gamma * beta / 2.0) - 1.0j)]
+        eta_p = [
+            self.lam * self.gamma *
+            (self._cot(self.gamma * beta / 2.0) - 1.0j)]
         gamma_p = [self.gamma]
 
         for ll in range(1, Nk + 1):
             eta_p.append(
-                (kappa[ll] / beta) * 4 * self.lam * self.gamma * (epsilon[ll] / beta)
-                / ((epsilon[ll]**2 / beta**2) - self.gamma**2)
-            )
+                (kappa[ll] / beta) * 4 * self.lam * self.gamma *
+                (epsilon[ll] / beta) /
+                ((epsilon[ll] ** 2 / beta ** 2) - self.gamma ** 2))
             gamma_p.append(epsilon[ll] / beta)
 
         return eta_p, gamma_p
@@ -687,6 +689,7 @@ class DrudeLorentzEnvironment(BosonicEnvironment):
         evals = eigvalsh(alpha_p)
         chi = [-2. / val for val in evals[0: Nk - 1]]
         return chi
+
 
 class UnderDampedEnvironment(BosonicEnvironment):
     r"""
@@ -798,7 +801,7 @@ class UnderDampedEnvironment(BosonicEnvironment):
         -------
         The correlation function evaluated at the time t.
         """
-
+        # TODO: I don't like this way of working with the fast fourier transform
         # we need an wMax so that spectral density is zero for w>wMax, guess:
         wMax = self.w0 + 10 * self.gamma
         return self._cf_from_ps(t, wMax)
@@ -1099,7 +1102,7 @@ class CFExponent:
                 imag_part_coefficient += self.ck2
             if other.type == self.types['RI']:
                 imag_part_coefficient += other.ck2
-            
+
             return CFExponent(self.types['RI'], real_part_coefficient,
                               self.vk, imag_part_coefficient)
         else:
@@ -1294,9 +1297,8 @@ class ExponentialBosonicEnvironment(BosonicEnvironment):
             raise ValueError(
                 "Bath temperature must be specified for this operation")
 
-        return self.power_spectrum(w) / (n_thermal(w, self.T) + 1) / 2
-
-
+        return np.heaviside(w, 0) * self.power_spectrum(w) \
+            / (n_thermal(w, self.T) + 1) / 2
 
 
 # --- utility functions ---
@@ -1310,6 +1312,7 @@ def _real_interpolation(fun, xlist, name):
                              f"provided for the discretized function ({name})")
         return CubicSpline(xlist, fun)
 
+
 def _complex_interpolation(fun, xlist, name):
     if callable(fun):
         return fun
@@ -1317,6 +1320,7 @@ def _complex_interpolation(fun, xlist, name):
         real_interp = _real_interpolation(np.real(fun), xlist, name)
         imag_interp = _real_interpolation(np.imag(fun), xlist, name)
         return lambda x: real_interp(x) + 1j * imag_interp(x)
+
 
 def _fft(f, wMax, tMax):
     r"""
@@ -1368,8 +1372,6 @@ def _fft(f, wMax, tMax):
     )
 
 
-
-
 # --- TODO ---
 
 class FermionicEnvironment(abc.ABC):
@@ -1398,15 +1400,15 @@ class FermionicEnvironment(abc.ABC):
 
     def exponential_approximation(self):
         raise NotImplementedError
-    
+
     @classmethod
     def from_spectral_density(cls):
         raise NotImplementedError
-    
+
     @classmethod
     def from_correlation_function(cls):
         raise NotImplementedError
-        
+
     @classmethod
     def from_power_spectrum(cls):
         raise NotImplementedError
