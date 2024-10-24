@@ -1211,7 +1211,6 @@ class UnderDampedEnvironment(BosonicEnvironment):
             )
             for k in range(1, Nk + 1)
         ])
-        print(ck_real)
 
         vk_real = [-1j * Om + Gamma, 1j * Om + Gamma]
         vk_real.extend([
